@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>吹き出し配置ツール</title>
+<style>
+  :root {
+    --bg: #f3f3f0;
+    --card: #fff;
+    --ink: #1b1b1b;
+    --muted: #5c5c5c;
+    --line: #d5d5d0;
+    --red: #c41212;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+  }
+  button, label.btn { cursor: pointer; }
+  main { width: min(640px, 100%); margin: 0 auto; padding: 16px 16px 28px; }
+  h1 { margin: 4px 0 12px; font-size: 22px; font-weight: 700; }
+  button, .btn {
+    appearance: none;
+    border: 1px solid var(--ink);
+    background: var(--ink);
+    color: #fff;
+    font: inherit;
+    font-size: 16px;
+    min-height: 48px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  button.ghost, .btn.ghost { background: #fff; color: var(--ink); }
+  button.warn { background: #fff; color: var(--red); border-color: var(--red); }
+  button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  button:disabled { opacity: 0.4; }
+  .file { display: none; }
+  .row { display: flex; gap: 8px; }
+  .grow { flex: 1; }
+  #stage {
+    margin-top: 10px;
+    background: #e4e4df;
+    border: 1px solid var(--line);
+    touch-action: none;
+  }
+  canvas { display: block; width: 100%; height: auto; }
+  .readout {
+    margin: 10px 0;
+    padding: 10px 12px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .tabs button { min-width: 48px; }
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    padding: 12px;
+    display: grid;
+    gap: 10px;
+  }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, textarea {
+    width: 100%;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    font-size: 16px;
+    padding: 8px 10px;
+    min-height: 48px;
+  }
+  textarea { min-height: 72px; resize: vertical; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  .choices button { flex: 1; min-width: 72px; }
+  .bar {
+    position: sticky;
+    bottom: 0;
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    background: linear-gradient(to top, var(--bg) 75%, transparent);
+  }
+  .status, .hint { min-height: 1.3em; margin: 8px 0 0; font-size: 14px; color: var(--muted); }
+  .status.bad { color: var(--red); }
+</style>
+</head>
+<body>
+<main>
+  <h1>吹き出し配置ツール</h1>
+  <label class="btn grow">画像を選ぶ
+    <input class="file" id="file" type="file" accept="image/*">
+  </label>
+  <div id="stage"><canvas id="view"></canvas></div>
+  <p class="readout" id="readout">吹き出しを追加すると、数値がここに出ます。</p>
+  <div class="tabs" id="tabs"></div>
+  <div class="panel" id="panel">
+    <label>セリフ
+      <textarea id="text" disabled></textarea>
+    </label>
+    <div class="choices" id="dir">
+      <button type="button" class="ghost" data-v="0" disabled>横書き</button>
+      <button type="button" class="ghost" data-v="1" disabled>縦書き</button>
+    </div>
+    <div class="choices" id="shapes">
+      <button type="button" class="ghost" data-shape="normal" disabled>通常</button>
+      <button type="button" class="ghost" data-shape="round" disabled>丸</button>
+      <button type="button" class="ghost" data-shape="shout" disabled>叫び</button>
+      <button type="button" class="ghost" data-shape="thought" disabled>心の声</button>
+    </div>
+    <div class="choices" id="fonts">
+      <button type="button" class="ghost" data-face="gothic" disabled>ゴシック</button>
+      <button type="button" class="ghost" data-face="mincho" disabled>明朝</button>
+      <button type="button" class="ghost" data-face="maru" disabled>丸ゴシック</button>
+      <button type="button" class="ghost" data-face="bold" disabled>太ゴシック</button>
+      <button type="button" class="ghost" data-face="hand" disabled>手書き風</button>
+    </div>
+    <div class="grid">
+      <label>中心X（％）<input id="cx" type="number" min="0" max="100" step="0.1" disabled></label>
+      <label>中心Y（％）<input id="cy" type="number" min="0" max="100" step="0.1" disabled></label>
+      <label>幅（％）<input id="bw" type="number" min="4" max="100" step="0.1" disabled></label>
+      <label>高さ（％）<input id="bh" type="number" min="4" max="100" step="0.1" disabled></label>
+      <label>回転（度）<input id="rot" type="number" step="1" disabled></label>
+      <label>文字サイズ（px）<input id="font" type="number" min="8" max="400" step="1" disabled></label>
+      <label>しっぽX（％）<input id="tx" type="number" min="0" max="100" step="0.1" disabled></label>
+      <label>しっぽY（％）<input id="ty" type="number" min="0" max="100" step="0.1" disabled></label>
+    </div>
+    <button type="button" class="warn" id="del" disabled>この吹き出しを削除</button>
+  </div>
+  <div class="bar">
+    <div class="row">
+      <button type="button" class="grow" id="add">吹き出し追加</button>
+      <button type="button" class="ghost grow" id="export" disabled>PNGで書き出し</button>
+    </div>
+    <p class="hint">％は画像の幅・高さに対する割合。吹き出し本体をドラッグすると中心が動き、赤丸をドラッグするとしっぽが動く。数値も一緒に変わる。</p>
+    <p class="status" id="status" role="status"></p>
+  </div>
+</main>
+<script>
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+const readout = document.getElementById("readout");
+const statusEl = document.getElementById("status");
+const textEl = document.getElementById("text");
+const tabsEl = document.getElementById("tabs");
+const delBtn = document.getElementById("del");
+const exportBtn = document.getElementById("export");
+const numIds = ["cx", "cy", "bw", "bh", "rot", "font", "tx", "ty"];
+const FONTS = {
+  gothic: { label: "ゴシック", weight: "400", family: "\"Hiragino Sans\", \"Hiragino Kaku Gothic ProN\", \"Yu Gothic\", \"Noto Sans JP\", sans-serif" },
+  mincho: { label: "明朝", weight: "400", family: "\"Hiragino Mincho ProN\", \"Hiragino Mincho Pro\", \"Yu Mincho\", \"YuMincho\", \"Noto Serif JP\", serif" },
+  maru: { label: "丸ゴシック", weight: "400", family: "\"Hiragino Maru Gothic ProN\", \"Hiragino Sans\", \"Yu Gothic\", \"Noto Sans JP\", sans-serif" },
+  bold: { label: "太ゴシック", weight: "700", family: "\"Hiragino Sans\", \"Hiragino Kaku Gothic ProN\", \"Yu Gothic\", \"Noto Sans JP\", sans-serif" },
+  hand: { label: "手書き風", weight: "400", family: "\"Comic Sans MS\", \"Hiragino Maru Gothic ProN\", \"Yu Gothic\", cursive, sans-serif" }
+};
+const nums = Object.fromEntries(numIds.map((id) => [id, document.getElementById(id)]));
+
+let img = null;
+let bubbles = [];
+let selected = -1;
+let seq = 0;
+let shownId = null;
+let armDelete = false;
+let drag = null;
+
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+function round1(n) {
+  return Math.round(n * 10) / 10;
+}
+function current() {
+  return selected >= 0 ? bubbles[selected] : null;
+}
+function setStatus(text, bad) {
+  statusEl.textContent = text || "";
+  statusEl.classList.toggle("bad", !!bad);
+}
+
+function layout() {
+  const stage = document.getElementById("stage");
+  const cssW = stage.clientWidth || 320;
+  const maxH = Math.max(220, Math.min(window.innerHeight * 0.46, cssW * 1.25));
+  let cssH = cssW * 0.72;
+  if (img) cssH = cssW / (img.width / img.height);
+  cssH = Math.min(Math.max(cssH, 180), maxH);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.style.width = cssW + "px";
+  canvas.style.height = cssH + "px";
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  draw();
+}
+
+function imageArea() {
+  const cw = canvas.width;
+  const ch = canvas.height;
+  if (!img) return { x: 0, y: 0, w: cw, h: ch };
+  const ir = img.width / img.height;
+  const cr = cw / ch;
+  if (ir > cr) {
+    const w = cw;
+    const h = cw / ir;
+    return { x: 0, y: (ch - h) / 2, w, h };
+  }
+  const h = ch;
+  const w = ch * ir;
+  return { x: (cw - w) / 2, y: 0, w, h };
+}
+
+function paint(target, area, chrome) {
+  target.fillStyle = "#ecece7";
+  target.fillRect(0, 0, target.canvas.width, target.canvas.height);
+  if (img) target.drawImage(img, area.x, area.y, area.w, area.h);
+  else {
+    target.fillStyle = "#deded8";
+    target.fillRect(area.x, area.y, area.w, area.h);
+    target.fillStyle = "#5c5c5c";
+    target.font = Math.round(area.w * 0.045) + "px sans-serif";
+    target.textAlign = "center";
+    target.textBaseline = "middle";
+    target.fillText("画像を選んでください", area.x + area.w / 2, area.y + area.h / 2);
+  }
+  const order = bubbles.map((b, i) => ({ b, i })).sort((a, c) => (a.i === selected) - (c.i === selected));
+  order.forEach(({ b, i }) => drawBubble(target, b, area, chrome && i === selected));
+}
+
+function draw() {
+  paint(ctx, imageArea(), true);
+}
+
+function toLocal(px, py, cx, cy, rot) {
+  const dx = px - cx;
+  const dy = py - cy;
+  const c = Math.cos(-rot);
+  const s = Math.sin(-rot);
+  return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
+
+function drawBubble(g, b, area, chrome) {
+  const cx = area.x + (b.cx / 100) * area.w;
+  const cy = area.y + (b.cy / 100) * area.h;
+  const bw = Math.max(8, (b.w / 100) * area.w);
+  const bh = Math.max(8, (b.h / 100) * area.h);
+  const tx = area.x + (b.tipX / 100) * area.w;
+  const ty = area.y + (b.tipY / 100) * area.h;
+  const rot = b.rot * Math.PI / 180;
+  const refH = img ? img.height : 1000;
+  const font = Math.max(8, b.font * (area.h / refH));
+  const localTip = toLocal(tx, ty, cx, cy, rot);
+  const lw = Math.max(1.5, Math.min(bw, bh) * 0.02);
+
+  g.save();
+  g.translate(cx, cy);
+  g.rotate(rot);
+  g.lineWidth = lw;
+  g.lineJoin = "round";
+  g.strokeStyle = "#161616";
+  g.fillStyle = "#fff";
+
+  if (b.shape !== "thought" && tipOutside(localTip, bw, bh, b.shape)) {
+    traceTail(g, bw, bh, localTip, b.shape);
+    g.fill();
+    g.stroke();
+  }
+  traceBody(g, bw, bh, b.shape);
+  g.fill();
+  g.stroke();
+
+  g.save();
+  traceClip(g, bw, bh, b.shape);
+  g.clip();
+  drawWords(g, b.text, b.vertical, font, bw * 0.78, bh * 0.72, FONTS[b.face] || FONTS.gothic);
+  g.restore();
+
+  if (b.shape === "thought") drawThoughtDots(g, bw, bh, localTip, lw);
+
+  if (chrome) {
+    g.save();
+    g.strokeStyle = "#c41212";
+    g.setLineDash([6, 4]);
+    g.lineWidth = Math.max(1, lw * 0.7);
+    g.strokeRect(-bw / 2, -bh / 2, bw, bh);
+    g.setLineDash([]);
+    g.beginPath();
+    g.arc(localTip.x, localTip.y, Math.max(7, lw * 2.2), 0, Math.PI * 2);
+    g.fillStyle = "#c41212";
+    g.fill();
+    g.restore();
+  }
+  g.restore();
+}
+
+function tipOutside(tip, bw, bh, shape) {
+  if (shape === "normal") return Math.abs(tip.x) > bw * 0.42 || Math.abs(tip.y) > bh * 0.42;
+  return (tip.x / (bw * 0.42)) ** 2 + (tip.y / (bh * 0.42)) ** 2 > 1;
+}
+
+function edgePoint(bw, bh, tip, shape) {
+  if (shape === "normal") {
+    const sx = (bw / 2) / (Math.abs(tip.x) || 0.001);
+    const sy = (bh / 2) / (Math.abs(tip.y) || 0.001);
+    const s = Math.min(sx, sy) * 0.92;
+    return { x: tip.x * s, y: tip.y * s };
+  }
+  const s = 1 / Math.sqrt((tip.x / (bw / 2)) ** 2 + (tip.y / (bh / 2)) ** 2);
+  return { x: tip.x * s * 0.92, y: tip.y * s * 0.92 };
+}
+
+function traceTail(g, bw, bh, tip, shape) {
+  const a = edgePoint(bw, bh, tip, shape);
+  const ang = Math.atan2(tip.y - a.y, tip.x - a.x);
+  const base = Math.min(bw, bh) * (shape === "shout" ? 0.1 : 0.16);
+  const px = a.x + Math.cos(ang + Math.PI / 2) * base;
+  const py = a.y + Math.sin(ang + Math.PI / 2) * base;
+  const qx = a.x + Math.cos(ang - Math.PI / 2) * base;
+  const qy = a.y + Math.sin(ang - Math.PI / 2) * base;
+  g.beginPath();
+  g.moveTo(px, py);
+  g.lineTo(tip.x, tip.y);
+  g.lineTo(qx, qy);
+  g.closePath();
+}
+
+function traceBody(g, bw, bh, shape) {
+  if (shape === "round" || shape === "thought") {
+    g.beginPath();
+    g.ellipse(0, 0, bw / 2, bh / 2, 0, 0, Math.PI * 2);
+    return;
+  }
+  if (shape === "shout") {
+    const n = 16;
+    g.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const a = (i / (n * 2)) * Math.PI * 2 - Math.PI / 2;
+      const rad = i % 2 === 0 ? 1 : 0.68;
+      const x = Math.cos(a) * (bw / 2) * rad;
+      const y = Math.sin(a) * (bh / 2) * rad;
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+    g.closePath();
+    return;
+  }
+  const r = Math.min(bw, bh) * 0.18;
+  const x = -bw / 2;
+  const y = -bh / 2;
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + bw, y, x + bw, y + bh, r);
+  g.arcTo(x + bw, y + bh, x, y + bh, r);
+  g.arcTo(x, y + bh, x, y, r);
+  g.arcTo(x, y, x + bw, y, r);
+  g.closePath();
+}
+
+function traceClip(g, bw, bh, shape) {
+  if (shape === "shout") {
+    g.beginPath();
+    g.ellipse(0, 0, bw * 0.32, bh * 0.32, 0, 0, Math.PI * 2);
+    return;
+  }
+  if (shape === "round" || shape === "thought") {
+    g.beginPath();
+    g.ellipse(0, 0, bw * 0.36, bh * 0.34, 0, 0, Math.PI * 2);
+    return;
+  }
+  const padX = bw * 0.12;
+  const padY = bh * 0.14;
+  g.beginPath();
+  g.rect(-bw / 2 + padX, -bh / 2 + padY, bw - padX * 2, bh - padY * 2);
+}
+
+function drawThoughtDots(g, bw, bh, tip, lw) {
+  if (!tipOutside(tip, bw, bh, "round")) return;
+  const a = edgePoint(bw, bh, tip, "round");
+  g.fillStyle = "#fff";
+  g.strokeStyle = "#161616";
+  g.lineWidth = lw;
+  for (let i = 1; i <= 3; i++) {
+    const t = i / 3;
+    const x = a.x + (tip.x - a.x) * t;
+    const y = a.y + (tip.y - a.y) * t;
+    const rad = (4 - i) * Math.min(bw, bh) * 0.035;
+    g.beginPath();
+    g.arc(x, y, Math.max(2, rad), 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+  }
+}
+
+function drawWords(g, text, vertical, font, maxW, maxH, face) {
+  const body = text || "";
+  const pick = face || FONTS.gothic;
+  g.fillStyle = "#161616";
+  g.font = pick.weight + " " + font + "px " + pick.family;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  if (!vertical) {
+    const lines = wrapText(g, body, maxW);
+    const lh = font * 1.25;
+    const block = Math.min(lines.length, Math.max(1, Math.floor(maxH / lh))) ;
+    const shown = lines.slice(0, block);
+    const top = -((shown.length - 1) * lh) / 2;
+    shown.forEach((line, i) => g.fillText(line, 0, top + i * lh));
+    return;
+  }
+  const cols = body.split("\n");
+  const colW = font * 1.15;
+  const fitCols = Math.max(1, Math.floor(maxW / colW));
+  const use = cols.slice(0, fitCols);
+  use.forEach((col, ci) => {
+    const chars = Array.from(col);
+    const lh = font * 1.08;
+    const fit = Math.max(1, Math.floor(maxH / lh));
+    const shown = chars.slice(0, fit);
+    const x = ((use.length - 1) * colW) / 2 - ci * colW;
+    const top = -((shown.length - 1) * lh) / 2;
+    shown.forEach((ch, i) => g.fillText(ch, x, top + i * lh));
+  });
+}
+
+function wrapText(g, text, maxW) {
+  const lines = [];
+  const parts = String(text).split("\n");
+  parts.forEach((para) => {
+    let line = "";
+    Array.from(para).forEach((ch) => {
+      const next = line + ch;
+      if (line && g.measureText(next).width > maxW) {
+        lines.push(line);
+        line = ch;
+      } else line = next;
+    });
+    lines.push(line);
+  });
+  return lines.length ? lines : [""];
+}
+
+function pointerPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) * (canvas.width / rect.width),
+    y: (e.clientY - rect.top) * (canvas.height / rect.height)
+  };
+}
+
+function bubbleGeom(b, area) {
+  return {
+    cx: area.x + (b.cx / 100) * area.w,
+    cy: area.y + (b.cy / 100) * area.h,
+    bw: Math.max(8, (b.w / 100) * area.w),
+    bh: Math.max(8, (b.h / 100) * area.h),
+    tx: area.x + (b.tipX / 100) * area.w,
+    ty: area.y + (b.tipY / 100) * area.h,
+    rot: b.rot * Math.PI / 180
+  };
+}
+
+function hitIndex(px, py) {
+  const area = imageArea();
+  const reach = 22 * (canvas.width / (canvas.getBoundingClientRect().width || canvas.width));
+  for (let i = bubbles.length - 1; i >= 0; i--) {
+    const g = bubbleGeom(bubbles[i], area);
+    if (Math.hypot(px - g.tx, py - g.ty) <= reach) return { index: i, mode: "tip" };
+  }
+  for (let i = bubbles.length - 1; i >= 0; i--) {
+    const b = bubbles[i];
+    const g = bubbleGeom(b, area);
+    const local = toLocal(px, py, g.cx, g.cy, g.rot);
+    const inside = b.shape === "normal"
+      ? Math.abs(local.x) <= g.bw / 2 && Math.abs(local.y) <= g.bh / 2
+      : (local.x / (g.bw / 2)) ** 2 + (local.y / (g.bh / 2)) ** 2 <= 1.2;
+    if (inside) return { index: i, mode: "move" };
+  }
+  return null;
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  const p = pointerPos(e);
+  const hit = hitIndex(p.x, p.y);
+  if (!hit) return;
+  selected = hit.index;
+  armDelete = false;
+  delBtn.textContent = "この吹き出しを削除";
+  const b = bubbles[selected];
+  const pct = posToPct(p.x, p.y);
+  drag = {
+    mode: hit.mode,
+    sx: pct.x,
+    sy: pct.y,
+    cx: b.cx,
+    cy: b.cy,
+    tipX: b.tipX,
+    tipY: b.tipY
+  };
+  canvas.setPointerCapture(e.pointerId);
+  sync();
+  draw();
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const b = bubbles[selected];
+  if (!b) return;
+  const p = pointerPos(e);
+  const pct = posToPct(p.x, p.y);
+  if (drag.mode === "tip") {
+    b.tipX = round1(clamp(pct.x, 0, 100));
+    b.tipY = round1(clamp(pct.y, 0, 100));
+  } else {
+    b.cx = round1(clamp(drag.cx + (pct.x - drag.sx), 0, 100));
+    b.cy = round1(clamp(drag.cy + (pct.y - drag.sy), 0, 100));
+  }
+  sync();
+  draw();
+});
+
+function endDrag() { drag = null; }
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+
+function posToPct(px, py) {
+  const area = imageArea();
+  return {
+    x: ((px - area.x) / area.w) * 100,
+    y: ((py - area.y) / area.h) * 100
+  };
+}
+
+function addBubble() {
+  const n = bubbles.length;
+  seq += 1;
+  bubbles.push({
+    id: seq,
+    text: "セリフ",
+    cx: round1(clamp(42 + (n % 3) * 8, 0, 100)),
+    cy: round1(clamp(34 + (n % 3) * 6, 0, 100)),
+    w: 36,
+    h: 22,
+    rot: 0,
+    font: img ? Math.round(Math.max(18, Math.min(180, img.height * 0.055))) : 42,
+    tipX: 50,
+    tipY: round1(clamp(72 + (n % 3) * 4, 0, 100)),
+    vertical: false,
+    shape: "normal",
+    face: "gothic"
+  });
+  selected = bubbles.length - 1;
+  shownId = null;
+  armDelete = false;
+  delBtn.textContent = "この吹き出しを削除";
+  setStatus("");
+  sync();
+  draw();
+}
+
+function readoutText(b) {
+  if (!b) return "吹き出しを追加すると、数値がここに出ます。";
+  return "中心 " + b.cx.toFixed(1) + "% , " + b.cy.toFixed(1)
+    + "%　幅 " + b.w.toFixed(1) + "%　高さ " + b.h.toFixed(1)
+    + "%　回転 " + b.rot + "°　文字 " + b.font
+    + "px " + (FONTS[b.face] || FONTS.gothic).label
+    + "　しっぽ " + b.tipX.toFixed(1) + "% , " + b.tipY.toFixed(1) + "%";
+}
+
+function sync() {
+  const b = current();
+  const on = !!b;
+  textEl.disabled = !on;
+  delBtn.disabled = !on;
+  numIds.forEach((id) => { nums[id].disabled = !on; });
+  document.querySelectorAll("#dir button, #shapes button, #fonts button").forEach((btn) => { btn.disabled = !on; });
+  readout.textContent = readoutText(b);
+  tabsEl.replaceChildren();
+  bubbles.forEach((row, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ghost";
+    btn.textContent = String(i + 1);
+    btn.setAttribute("aria-pressed", i === selected ? "true" : "false");
+    btn.setAttribute("aria-label", (i + 1) + "番の吹き出し");
+    btn.addEventListener("click", () => {
+      selected = i;
+      shownId = null;
+      armDelete = false;
+      delBtn.textContent = "この吹き出しを削除";
+      sync();
+      draw();
+    });
+    tabsEl.append(btn);
+  });
+  if (!b) {
+    textEl.value = "";
+    shownId = null;
+    return;
+  }
+  nums.cx.value = b.cx;
+  nums.cy.value = b.cy;
+  nums.bw.value = b.w;
+  nums.bh.value = b.h;
+  nums.rot.value = b.rot;
+  nums.font.value = b.font;
+  nums.tx.value = b.tipX;
+  nums.ty.value = b.tipY;
+  if (shownId !== b.id) {
+    textEl.value = b.text;
+    shownId = b.id;
+  }
+  document.querySelectorAll("#dir button").forEach((btn) => {
+    btn.setAttribute("aria-pressed", (btn.dataset.v === "1") === b.vertical ? "true" : "false");
+  });
+  document.querySelectorAll("#shapes button").forEach((btn) => {
+    btn.setAttribute("aria-pressed", btn.dataset.shape === b.shape ? "true" : "false");
+  });
+  document.querySelectorAll("#fonts button").forEach((btn) => {
+    btn.setAttribute("aria-pressed", btn.dataset.face === (b.face || "gothic") ? "true" : "false");
+  });
+}
+
+document.getElementById("add").addEventListener("click", addBubble);
+
+textEl.addEventListener("input", () => {
+  const b = current();
+  if (!b) return;
+  b.text = textEl.value;
+  draw();
+});
+
+document.getElementById("dir").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  const b = current();
+  if (!btn || !b) return;
+  b.vertical = btn.dataset.v === "1";
+  sync();
+  draw();
+});
+
+document.getElementById("shapes").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  const b = current();
+  if (!btn || !b) return;
+  b.shape = btn.dataset.shape;
+  sync();
+  draw();
+});
+
+document.getElementById("fonts").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  const b = current();
+  if (!btn || !b) return;
+  b.face = btn.dataset.face;
+  sync();
+  draw();
+});
+
+document.getElementById("panel").addEventListener("input", (e) => {
+  const b = current();
+  if (!b || !numIds.includes(e.target.id)) return;
+  const value = Number(e.target.value);
+  if (!Number.isFinite(value)) return;
+  if (e.target.id === "cx") b.cx = round1(clamp(value, 0, 100));
+  if (e.target.id === "cy") b.cy = round1(clamp(value, 0, 100));
+  if (e.target.id === "bw") b.w = round1(clamp(value, 4, 100));
+  if (e.target.id === "bh") b.h = round1(clamp(value, 4, 100));
+  if (e.target.id === "rot") b.rot = Math.round(value);
+  if (e.target.id === "font") b.font = Math.round(clamp(value, 8, 400));
+  if (e.target.id === "tx") b.tipX = round1(clamp(value, 0, 100));
+  if (e.target.id === "ty") b.tipY = round1(clamp(value, 0, 100));
+  readout.textContent = readoutText(b);
+  draw();
+});
+
+delBtn.addEventListener("click", () => {
+  if (selected < 0) return;
+  if (!armDelete) {
+    armDelete = true;
+    delBtn.textContent = "本当に削除";
+    return;
+  }
+  bubbles.splice(selected, 1);
+  selected = bubbles.length ? Math.min(selected, bubbles.length - 1) : -1;
+  shownId = null;
+  armDelete = false;
+  delBtn.textContent = "この吹き出しを削除";
+  sync();
+  draw();
+});
+
+document.getElementById("file").addEventListener("change", () => {
+  const file = document.getElementById("file").files && document.getElementById("file").files[0];
+  document.getElementById("file").value = "";
+  if (!file) return;
+  loadFile(file);
+});
+
+const stage = document.getElementById("stage");
+stage.addEventListener("dragover", (e) => e.preventDefault());
+stage.addEventListener("drop", (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+function loadFile(file) {
+  if (!file.type.startsWith("image/")) {
+    setStatus("画像ファイルを選んでください。", true);
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  const next = new Image();
+  next.onload = () => {
+    if (img && img.src) URL.revokeObjectURL(img.src);
+    img = next;
+    exportBtn.disabled = false;
+    setStatus("");
+    layout();
+  };
+  next.onerror = () => {
+    URL.revokeObjectURL(url);
+    setStatus("この形式は読めません。JPEGかPNGにしてください。", true);
+  };
+  next.src = url;
+}
+
+exportBtn.addEventListener("click", () => {
+  if (!img) return;
+  exportBtn.disabled = true;
+  setStatus("書き出しています…");
+  const maxEdge = 2000;
+  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const g = out.getContext("2d");
+  paint(g, { x: 0, y: 0, w, h }, false);
+  out.toBlob((blob) => {
+    exportBtn.disabled = !img;
+    if (!blob) {
+      setStatus("書き出せませんでした。", true);
+      return;
+    }
+    const a = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = "fukidashi.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    setStatus("PNGを保存しました。");
+  }, "image/png");
+});
+
+window.addEventListener("resize", layout);
+sync();
+layout();
+</script>
+</body>
+</html>
